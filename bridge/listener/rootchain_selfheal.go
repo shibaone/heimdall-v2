@@ -33,11 +33,11 @@ var (
 		Help:      "The total number of missing StakeUpdate events",
 	}, []string{"id", "nonce", "contract_address", "block_number", "tx_hash"})
 
-	checkpointCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	checkpointAckCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "self_healing",
 		Subsystem: helper.GetConfig().Chain,
 		Name:      "NewHeaderBlock",
-		Help:      "The total number of missing NewHeaderBlock events",
+		Help:      "The total number of acks sent for missing NewHeaderBlock events",
 	}, []string{"headerBlockId", "contract_address", "block_number", "tx_hash"})
 )
 
@@ -60,7 +60,7 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 
 	stakeUpdateTicker := time.NewTicker(helper.GetConfig().SHStakeUpdateInterval)
 	stateSyncedTicker := time.NewTicker(helper.GetConfig().SHStateSyncedInterval)
-	checkpointTicker := time.NewTicker(helper.GetConfig().SHCheckpointInterval)
+	checkpointAckTicker := time.NewTicker(helper.GetConfig().SHCheckpointAckInterval)
 
 	rl.Logger.Info("Started self-healing")
 
@@ -70,8 +70,8 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 			rl.processStakeUpdate(ctx)
 		case <-stateSyncedTicker.C:
 			rl.processStateSynced(ctx)
-		case <-checkpointTicker.C:
-			rl.processCheckpoint(ctx)
+		case <-checkpointAckTicker.C:
+			rl.processCheckpointAck(ctx)
 		case <-ctx.Done():
 			rl.Logger.Info("Stopping self-healing")
 			stakeUpdateTicker.Stop()
@@ -82,7 +82,7 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 	}
 }
 
-func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
+func (rl *RootChainListener) processCheckpointAck(ctx context.Context) {
 	rl.Logger.Info("Processing checkpoint self-healing")
 
 	// Get the latest header block event from L1 using subgraph.
@@ -106,6 +106,20 @@ func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
 	}
 
 	l1HeaderBlockId = l1HeaderBlockId / checkpointParams.ChildChainBlockInterval
+
+	// Get the latest checkpoint id from Heimdall using the checkpoint ack count.
+	// Using GetLatestCheckpoint returns an error if there is no checkpoint.
+	// So we use GetCheckpointAckCount instead.
+	ackCount, err := util.GetCheckpointAckCount(rl.cliCtx.Codec)
+	if err != nil {
+		rl.Logger.Error("Failed to get checkpoint ack count", "error", err)
+		return
+	}
+
+	if l1HeaderBlockId == ackCount {
+		rl.Logger.Info("Latest checkpoint is already synced on Heimdall; skipping", "l1HeaderBlockId", l1HeaderBlockId, "heimdallAckCount", ackCount)
+		return
+	}
 
 	// Check if we have a checkpoint in buffer.
 	bufferedCheckpoint, err := util.GetBufferedCheckpoint(rl.cliCtx.Codec)
@@ -149,7 +163,7 @@ func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
 		return
 	}
 
-	checkpointCounter.WithLabelValues(
+	checkpointAckCounter.WithLabelValues(
 		fmt.Sprintf("%d", l1HeaderBlockId),
 		targetLog.Address.Hex(),
 		fmt.Sprintf("%d", targetLog.BlockNumber),
