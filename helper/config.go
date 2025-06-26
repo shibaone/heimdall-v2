@@ -91,7 +91,7 @@ const (
 	DefaultMilestonePollInterval = 30 * time.Second
 
 	// Self healing defaults
-	DefaultEnableSH              = false
+	DefaultEnableSH              = true
 	DefaultSubGraphUrl           = "http://localhost:8000/subgraphs/name/devnet-subgraph"
 	DefaultSHStateSyncedInterval = 3 * time.Hour
 	DefaultSHStakeUpdateInterval = 3 * time.Hour
