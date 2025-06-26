@@ -92,7 +92,7 @@ const (
 
 	// Self healing defaults
 	DefaultEnableSH              = true
-	DefaultSubGraphUrl           = "http://localhost:8000/subgraphs/name/devnet-subgraph"
+	DefaultSubGraphUrl           = "http://host.docker.internal:8000/subgraphs/name/devnet-subgraph"
 	DefaultSHStateSyncedInterval = 3 * time.Hour
 	DefaultSHStakeUpdateInterval = 3 * time.Hour
 	DefaultSHCheckpointInterval  = 1 * time.Minute
