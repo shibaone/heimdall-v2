@@ -92,13 +92,6 @@ func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
 		return
 	}
 
-	// Get the latest checkpoint from Heimdall.
-	latestHeimdallCheckpoint, err := util.GetLatestCheckpoint(rl.cliCtx.Codec)
-	if err != nil {
-		rl.Logger.Error("Failed to fetch latest checkpoint from Heimdall", "error", err)
-		return
-	}
-
 	l1HeaderBlockId, err := strconv.ParseUint(latestL1Checkpoint.HeaderBlockId, 10, 64)
 	if err != nil {
 		rl.Logger.Error("Failed to parse L1 checkpoint header block ID", "error", err)
@@ -113,12 +106,6 @@ func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
 	}
 
 	l1HeaderBlockId = l1HeaderBlockId / checkpointParams.ChildChainBlockInterval
-
-	// If the L1 checkpoint is already synced on Heimdall, skip.
-	if l1HeaderBlockId == latestHeimdallCheckpoint.Id {
-		rl.Logger.Info("Latest checkpoint is already synced on Heimdall; skipping", "l1HeaderBlockId", l1HeaderBlockId, "heimdallCheckpointId", latestHeimdallCheckpoint.Id)
-		return
-	}
 
 	// Check if we have a checkpoint in buffer.
 	bufferedCheckpoint, err := util.GetBufferedCheckpoint(rl.cliCtx.Codec)
