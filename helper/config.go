@@ -90,11 +90,13 @@ const (
 
 	DefaultMilestonePollInterval = 30 * time.Second
 
+	// Self healing defaults
 	DefaultEnableSH              = false
-	DefaultSHStateSyncedInterval = 15 * time.Minute
+	DefaultSubGraphUrl           = "http://localhost:8000/subgraphs/name/devnet-subgraph"
+	DefaultSHStateSyncedInterval = 3 * time.Hour
 	DefaultSHStakeUpdateInterval = 3 * time.Hour
-
-	DefaultSHMaxDepthDuration = time.Hour
+	DefaultSHCheckpointInterval  = 1 * time.Minute
+	DefaultSHMaxDepthDuration    = 24 * time.Hour
 
 	DefaultMainChainGasLimit = uint64(5000000)
 
@@ -155,6 +157,7 @@ type CustomConfig struct {
 	EnableSH               bool          `mapstructure:"enable_self_heal"`         // Enable self-healing
 	SHStateSyncedInterval  time.Duration `mapstructure:"sh_state_synced_interval"` // Interval to self-heal StateSynced events if missing
 	SHStakeUpdateInterval  time.Duration `mapstructure:"sh_stake_update_interval"` // Interval to self-heal StakeUpdate events if missing
+	SHCheckpointInterval   time.Duration `mapstructure:"sh_checkpoint_interval"`   // Interval to self-heal Checkpoint (New Header Blocks) events if missing
 	SHMaxDepthDuration     time.Duration `mapstructure:"sh_max_depth_duration"`    // Max duration that allows to suggest self-healing is not needed
 
 	// wait-time-related options
@@ -355,6 +358,12 @@ func InitHeimdallConfigWith(homeDir string, heimdallConfigFileFromFlag string) {
 		conf.Custom.SHStakeUpdateInterval = DefaultSHStakeUpdateInterval
 	}
 
+	if conf.Custom.SHCheckpointInterval == 0 {
+		// fallback to default
+		Logger.Debug("Missing self-healing Checkpoint interval or invalid value provided, falling back to default", "interval", DefaultSHCheckpointInterval)
+		conf.Custom.SHCheckpointInterval = DefaultSHCheckpointInterval
+	}
+
 	if conf.Custom.SHMaxDepthDuration == 0 {
 		// fallback to default
 		Logger.Debug("Missing self-healing max depth duration or invalid value provided, falling back to default", "duration", DefaultSHMaxDepthDuration)
@@ -445,8 +454,10 @@ func GetDefaultHeimdallConfig() CustomConfig {
 		SpanPollInterval:       DefaultSpanPollInterval,
 		MilestonePollInterval:  DefaultMilestonePollInterval,
 		EnableSH:               DefaultEnableSH,
+		SubGraphUrl:            DefaultSubGraphUrl,
 		SHStateSyncedInterval:  DefaultSHStateSyncedInterval,
 		SHStakeUpdateInterval:  DefaultSHStakeUpdateInterval,
+		SHCheckpointInterval:   DefaultSHCheckpointInterval,
 		SHMaxDepthDuration:     DefaultSHMaxDepthDuration,
 
 		NoACKWaitTime: NoACKWaitTime,
@@ -998,6 +1009,10 @@ func (c *CustomAppConfig) Merge(cc *CustomConfig) {
 
 	if cc.MilestonePollInterval != 0 {
 		c.Custom.MilestonePollInterval = cc.MilestonePollInterval
+	}
+
+	if cc.SHCheckpointInterval != 0 {
+		c.Custom.SHCheckpointInterval = cc.SHCheckpointInterval
 	}
 
 	if cc.NoACKWaitTime != 0 {

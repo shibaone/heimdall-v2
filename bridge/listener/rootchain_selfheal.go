@@ -2,11 +2,14 @@ package listener
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -29,6 +32,13 @@ var (
 		Name:      "StakeUpdate",
 		Help:      "The total number of missing StakeUpdate events",
 	}, []string{"id", "nonce", "contract_address", "block_number", "tx_hash"})
+
+	checkpointCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "self_healing",
+		Subsystem: helper.GetConfig().Chain,
+		Name:      "NewHeaderBlock",
+		Help:      "The total number of missing NewHeaderBlock events",
+	}, []string{"headerBlockId", "contract_address", "block_number", "tx_hash"})
 )
 
 type subGraphClient struct {
@@ -50,6 +60,7 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 
 	stakeUpdateTicker := time.NewTicker(helper.GetConfig().SHStakeUpdateInterval)
 	stateSyncedTicker := time.NewTicker(helper.GetConfig().SHStateSyncedInterval)
+	checkpointTicker := time.NewTicker(helper.GetConfig().SHCheckpointInterval)
 
 	rl.Logger.Info("Started self-healing")
 
@@ -59,6 +70,8 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 			rl.processStakeUpdate(ctx)
 		case <-stateSyncedTicker.C:
 			rl.processStateSynced(ctx)
+		case <-checkpointTicker.C:
+			rl.processCheckpoint(ctx)
 		case <-ctx.Done():
 			rl.Logger.Info("Stopping self-healing")
 			stakeUpdateTicker.Stop()
@@ -67,6 +80,98 @@ func (rl *RootChainListener) startSelfHealing(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (rl *RootChainListener) processCheckpoint(ctx context.Context) {
+	rl.Logger.Info("Processing checkpoint self-healing")
+
+	// Get the latest header block event from L1 using subgraph.
+	latestL1Checkpoint, err := rl.getLatestCheckpointFromL1(ctx)
+	if err != nil {
+		rl.Logger.Error("Failed to fetch latest header block event from L1 subgraph", "error", err)
+		return
+	}
+
+	// Get the latest checkpoint from Heimdall.
+	latestHeimdallCheckpoint, err := util.GetLatestCheckpoint(rl.cliCtx.Codec)
+	if err != nil {
+		rl.Logger.Error("Failed to fetch latest checkpoint from Heimdall", "error", err)
+		return
+	}
+
+	l1HeaderBlockId, err := strconv.ParseUint(latestL1Checkpoint.HeaderBlockId, 10, 64)
+	if err != nil {
+		rl.Logger.Error("Failed to parse L1 checkpoint header block ID", "error", err)
+		return
+	}
+
+	// Get checkpoint parameters to get ChildChainBlockInterval.
+	checkpointParams, err := util.GetCheckpointParams(rl.cliCtx.Codec)
+	if err != nil {
+		rl.Logger.Error("Failed to get checkpoint params", "error", err)
+		return
+	}
+
+	l1HeaderBlockId = l1HeaderBlockId / checkpointParams.ChildChainBlockInterval
+
+	// If the L1 checkpoint is already synced on Heimdall, skip.
+	if l1HeaderBlockId == latestHeimdallCheckpoint.Id {
+		rl.Logger.Info("Latest checkpoint is already synced on Heimdall; skipping", "l1HeaderBlockId", l1HeaderBlockId, "heimdallCheckpointId", latestHeimdallCheckpoint.Id)
+		return
+	}
+
+	// Check if we have a checkpoint in buffer.
+	bufferedCheckpoint, err := util.GetBufferedCheckpoint(rl.cliCtx.Codec)
+	if err != nil {
+		rl.Logger.Info("No buffered checkpoint found")
+		return
+	}
+
+	// Check if the buffered checkpoint matches the L1 checkpoint.
+	if l1HeaderBlockId != bufferedCheckpoint.Id {
+		rl.Logger.Info("No matching buffered checkpoint found for L1 checkpoint", "l1HeaderBlockId", l1HeaderBlockId, "bufferedCheckpointId", bufferedCheckpoint.Id)
+		return
+	}
+
+	rl.Logger.Info("Found matching buffered checkpoint, preparing to send ACK", "checkpointId", l1HeaderBlockId)
+
+	// Get the transaction receipt to construct the ACK.
+	receipt, err := rl.contractCaller.MainChainClient.TransactionReceipt(ctx, common.HexToHash(latestL1Checkpoint.TransactionHash))
+	if err != nil {
+		rl.Logger.Error("Failed to get transaction receipt for L1 checkpoint", "txHash", latestL1Checkpoint.TransactionHash, "error", err)
+		return
+	}
+	// Find the correct log within the transaction.
+	var targetLog *types.Log
+	for _, log := range receipt.Logs {
+		if strconv.Itoa(int(log.Index)) == latestL1Checkpoint.LogIndex {
+			targetLog = log
+			rl.Logger.Info("Retrieved log for NewHeaderBlock event", "headerBlockId", l1HeaderBlockId, "logIndex", latestL1Checkpoint.LogIndex, "txHash", latestL1Checkpoint.TransactionHash)
+			break
+		}
+	}
+	if targetLog == nil {
+		rl.Logger.Error("Failed to find matching log in transaction receipt", "txHash", latestL1Checkpoint.TransactionHash, "expectedLogIndex", latestL1Checkpoint.LogIndex)
+		return
+	}
+
+	// Marshal the log to JSON for the task queue.
+	logBytes, err := json.Marshal(*targetLog)
+	if err != nil {
+		rl.Logger.Error("Failed to marshal log to JSON", "error", err)
+		return
+	}
+
+	checkpointCounter.WithLabelValues(
+		fmt.Sprintf("%d", l1HeaderBlockId),
+		targetLog.Address.Hex(),
+		fmt.Sprintf("%d", targetLog.BlockNumber),
+		targetLog.TxHash.Hex(),
+	).Add(1)
+
+	// Send the checkpoint ACK task.
+	rl.SendTaskWithDelay("sendCheckpointAckToHeimdall", helper.NewHeaderBlockEvent, logBytes, 0, nil)
+	rl.Logger.Info("Successfully queued checkpoint ACK task", "headerBlockId", l1HeaderBlockId, "logIndex", latestL1Checkpoint.LogIndex, "txHash", targetLog.TxHash.Hex())
 }
 
 // processStakeUpdate checks if validators are in sync, otherwise syncs them by broadcasting missing events
