@@ -40,14 +40,14 @@ func (rl *RootChainListener) handleLog(vLog types.Log, selectedEvent *abi.Event)
 }
 
 func (rl *RootChainListener) handleNewHeaderBlockLog(vLog types.Log, selectedEvent *abi.Event) {
-	// logBytes, err := json.Marshal(vLog)
-	// if err != nil {
-	// 	rl.Logger.Error("Failed to marshal log", "Error", err)
-	// }
+	logBytes, err := json.Marshal(vLog)
+	if err != nil {
+		rl.Logger.Error("Failed to marshal log", "Error", err)
+	}
 
-	// if isCurrentValidator, delay := util.CalculateTaskDelay(selectedEvent, rl.cliCtx.Codec); isCurrentValidator {
-	// 	rl.SendTaskWithDelay("sendCheckpointAckToHeimdall", selectedEvent.Name, logBytes, delay, selectedEvent)
-	// }
+	if isCurrentValidator, delay := util.CalculateTaskDelay(selectedEvent, rl.cliCtx.Codec); isCurrentValidator {
+		rl.SendTaskWithDelay("sendCheckpointAckToHeimdall", selectedEvent.Name, logBytes, delay, selectedEvent)
+	}
 }
 
 func (rl *RootChainListener) handleStakedLog(vLog types.Log, selectedEvent *abi.Event) {
