@@ -91,10 +91,11 @@ const (
 	DefaultMilestonePollInterval = 30 * time.Second
 
 	// Self healing defaults
-	DefaultEnableSH                = false
+	DefaultEnableSH                = true
+	DefaultSubGraphUrl             = "http://host.docker.internal:8000/subgraphs/name/devnet-subgraph"
 	DefaultSHStateSyncedInterval   = 3 * time.Hour
 	DefaultSHStakeUpdateInterval   = 3 * time.Hour
-	DefaultSHCheckpointAckInterval = 30 * time.Minute
+	DefaultSHCheckpointAckInterval = 30 * time.Second
 	DefaultSHMaxDepthDuration      = 24 * time.Hour
 
 	DefaultMainChainGasLimit = uint64(5000000)
@@ -453,6 +454,7 @@ func GetDefaultHeimdallConfig() CustomConfig {
 		SpanPollInterval:        DefaultSpanPollInterval,
 		MilestonePollInterval:   DefaultMilestonePollInterval,
 		EnableSH:                DefaultEnableSH,
+		SubGraphUrl:             DefaultSubGraphUrl,
 		SHStateSyncedInterval:   DefaultSHStateSyncedInterval,
 		SHStakeUpdateInterval:   DefaultSHStakeUpdateInterval,
 		SHCheckpointAckInterval: DefaultSHCheckpointAckInterval,

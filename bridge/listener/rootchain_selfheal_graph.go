@@ -3,6 +3,7 @@ package listener
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+
+	"github.com/0xPolygon/heimdall-v2/bridge/util"
+	checkpointTypes "github.com/0xPolygon/heimdall-v2/x/checkpoint/types"
 )
 
 // stakeUpdate represents the StakeUpdate event.
@@ -32,6 +36,11 @@ type stateSynced struct {
 // newHeaderBlock represents the NewHeaderBlock event.
 type newHeaderBlock struct {
 	HeaderBlockId   string `json:"headerBlockId"`
+	Proposer        string `json:"proposer"`
+	StartBlock      string `json:"start"`
+	EndBlock        string `json:"end"`
+	RootHash        string `json:"root"`
+	Timestamp       string `json:"blockTimestamp"`
 	LogIndex        string `json:"logIndex"`
 	TransactionHash string `json:"transactionHash"`
 }
@@ -307,4 +316,70 @@ func (rl *RootChainListener) getLatestCheckpointFromL1(ctx context.Context) (*ne
 	rl.Logger.Info("Fetched latest header block event from subgraph", "headerBlockId", latestHeaderBlock.HeaderBlockId, "logIndex", latestHeaderBlock.LogIndex, "transactionHash", latestHeaderBlock.TransactionHash)
 
 	return &latestHeaderBlock, nil
+}
+
+// convertNewHeaderBlockToCheckpoint converts a newHeaderBlock to checkpointTypes.Checkpoint
+func (rl *RootChainListener) convertNewHeaderBlockToCheckpoint(headerBlock *newHeaderBlock) (*checkpointTypes.Checkpoint, error) {
+	// Get the root chain context to access BorChainId
+	rootChainContext, err := rl.getRootChainContext()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get root chain context: %w", err)
+	}
+	borChainId := rootChainContext.ChainmanagerParams.ChainParams.BorChainId
+
+	// Get checkpoint parameters to access ChildChainBlockInterval
+	checkpointParams, err := util.GetCheckpointParams(rl.cliCtx.Codec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get checkpoint params: %w", err)
+	}
+
+	// Convert string fields to appropriate types
+	headerBlockId, err := strconv.ParseUint(headerBlock.HeaderBlockId, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse header block id: %w", err)
+	}
+
+	// Calculate checkpoint ID by dividing HeaderBlockId by child chain block interval
+	if checkpointParams.ChildChainBlockInterval == 0 {
+		return nil, fmt.Errorf("child chain block interval cannot be zero")
+	}
+	id := headerBlockId / checkpointParams.ChildChainBlockInterval
+
+	startBlock, err := strconv.ParseUint(headerBlock.StartBlock, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse start block: %w", err)
+	}
+
+	endBlock, err := strconv.ParseUint(headerBlock.EndBlock, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse end block: %w", err)
+	}
+
+	timestamp, err := strconv.ParseUint(headerBlock.Timestamp, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	// Convert hex string to bytes for root hash
+	rootHashHex := headerBlock.RootHash
+	if len(rootHashHex) >= 2 && rootHashHex[:2] == "0x" {
+		rootHashHex = rootHashHex[2:] // Remove "0x" prefix
+	}
+	rootHashBytes, err := hex.DecodeString(rootHashHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode root hash: %w", err)
+	}
+
+	// Create and return the checkpoint
+	checkpoint := &checkpointTypes.Checkpoint{
+		Id:         id,
+		Proposer:   headerBlock.Proposer,
+		StartBlock: startBlock,
+		EndBlock:   endBlock,
+		RootHash:   rootHashBytes,
+		BorChainId: borChainId,
+		Timestamp:  timestamp,
+	}
+
+	return checkpoint, nil
 }

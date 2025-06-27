@@ -127,6 +127,12 @@ func (rl *RootChainListener) processCheckpointAck(ctx context.Context) {
 		rl.Logger.Info("No buffered checkpoint found")
 		return
 	}
+	newHeaderBlockCheckpoint, err := rl.convertNewHeaderBlockToCheckpoint(latestL1Checkpoint)
+	if err != nil {
+		rl.Logger.Error("Failed to convert buffered checkpoint to checkpoint", "error", err)
+		return
+	}
+	rl.Logger.Info("Converted buffered checkpoint to checkpoint", "bufferedCheckpoint", bufferedCheckpoint, "newHeaderBlockCheckpoint", newHeaderBlockCheckpoint)
 
 	// Check if the buffered checkpoint matches the L1 checkpoint.
 	if l1HeaderBlockId != bufferedCheckpoint.Id {
